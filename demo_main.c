@@ -321,8 +321,8 @@ double *initial_R(double *metrics_data, double *predic_data, double *metrics_mea
 	*/
 
 	for(i=0; i<4; i++){
-		tmp1 = predic_data[i]-metrics_mean_data[i];
-		tmp2 = metrics_data[i]-metrics_mean_data[i];
+		//tmp1 = predic_data[i]-metrics_mean_data[i];
+		//tmp2 = metrics_data[i]-metrics_mean_data[i];
 			//printf("the vp - vn = %lf %lf\t  the vn+1- vn = %lf %lf\n",predic_data[i],metrics_f_data[i],metrics_data[i],metrics_f_data[i]);
 			//R_value[i] = (predic_data[i]-metrics_f_data[i])/(metrics_data[i]-metrics_f_data[i]);
 		R_value[i] = (predic_data[i]- metrics_data[i] )/metrics_mean_data[i];
@@ -344,8 +344,9 @@ double *get_mean(sequeue_t *queue)
 		for(j=0;j<N;j++){
 			mean[i] += queue->data[j][i];
 		}
+	mean[i]=mean[i]/N;
 	}
-	
+	return mean;	
 }
 
 /********************初始化R_value相关函数*********************/
@@ -355,11 +356,6 @@ int main(){
 	//open file
 	FILE *fp1;
 	fp1 = fopen("paper_result.txt","w");
-	//最终变量
-	double *A,*V;
-	A = (double *)malloc(4*sizeof(double));
-	V = (double *)malloc(4*sizeof(double));
-
 
 	//初始化所需要变量
 	int i,j;
@@ -375,8 +371,8 @@ int main(){
 	metrics_f_data= (double *)malloc(4*sizeof(double));
 
 	//initial lamda
-	for(i=0;i<N;i++){
-		lamda[i] = 1/(double)N;
+	for(i=1;i<=N;i++){
+		lamda[i-1] = (i*2)/(double)(N*(N+1));  // such that the sum of all the lamda values=1
 	}
 
 	//初始化metrics
@@ -390,7 +386,6 @@ int main(){
 
 	}
 	printQueue(metrics);
-
 	
 	if(FullSequeue(metrics) == 0) return -1;
 	//确定整个填充整个metrics.
@@ -408,12 +403,9 @@ int main(){
 			printf("the 1st predic_value is %lf %lf %lf %lf\n\n",predic_data[0],predic_data[1],predic_data[2],predic_data[3]);
 		}
 		if (NewEnQueue(predic_values,predic_data)==-1) return -1; //入队
-		
-
-
 
 		//更新一次时间，并且更新一次metrics队列
-		memcpy(metrics_f_data,metrics_data,4*sizeof(double));
+		//memcpy(metrics_f_data,metrics_data,4*sizeof(double));
 		memcpy(metrics_f_data,get_mean(metrics),4*sizeof(double));
 		memcpy(metrics_data, Initial_Metrics("eth0"),4*sizeof(double));
 
@@ -424,8 +416,6 @@ int main(){
 		if(NewEnQueue(R_values, R_data) == -1) return -1;
 
 		if (NewDeQueue(metrics) == NULL)  return -1;
-
-
 		if (NewEnQueue(metrics,metrics_data) == -1) return -1;
 
 		//test****************
@@ -441,9 +431,6 @@ int main(){
 
 
 	//第一次更新完成后，metrics是最新的metrics，但是R和predic_value都没有更新，所以如果需要比较的话，需要找到上一次的metric做比较
-	//printQueue(metrics);
-	//printQueue(predic_values);
-	//printQueue(R_values);
 
 	if(FullSequeue(predic_values)==1) 
 		printf("predic初始化完成！\n");
@@ -452,8 +439,11 @@ int main(){
 	//初始化mean
 	for(i=0; i<N; i++){
 		for(j=0; j<4; j++){
-			mean[j]+=lamda[i]*R_values->data[i][j]; //首先计算累加之和
+			mean[j]+=R_values->data[i][j]; //首先计算累加之和
 		}
+	}
+	for(i=0;i<4;i++){
+		mean[i] = mean[i]/N;
 	}
 
 
@@ -486,36 +476,29 @@ int main(){
 	
 
 	while(1){
-
-
-		//double * Initial_Metrics(char *ethernet_name);
-		memcpy(metrics_f_data,metrics_data,4*sizeof(double));
 		memcpy(metrics_f_data,get_mean(metrics),4*sizeof(double));
 		//更新metrics队列
 		if ((metrics) == NULL)  return -1;
 		memcpy(metrics_data, Initial_Metrics("eth0"),4*sizeof(double));
-
-		//if (NewDeQueue(metrics) == NULL) return -1;
-
-		//memcpy(tmp1,NewDeQueue(metrics),4*sizeof(double));
-		//printf("the dequeue values is %lf,%lf,%lf,%lf\n\n",tmp1[0],tmp1[1],tmp1[2],tmp1[3]);
 		
-		if (NewDeQueue(metrics) == NULL)  return -1;
-		if (NewEnQueue(metrics,metrics_data) == -1) return -1;
 		//更新predic队列
+		//predict before pushing new value
 		memcpy(predic_data,initial_predic(metrics),4*sizeof(double));
-
-		//printf("%p, %p\n", predic_data, initial_predic(metrics));
 		if (NewDeQueue(predic_values) == NULL) return -1;
 		//printf("debug2\n");
 		if (NewEnQueue(predic_values,predic_data) == -1) return -1;
+		
+		if (NewDeQueue(metrics) == NULL)  return -1;
+		if (NewEnQueue(metrics,metrics_data) == -1) return -1;
+		
 		//更新R队列
 		memcpy(R_data,initial_R(metrics_data, predic_data,metrics_f_data),4*sizeof(double));
 		//calculate if there is a suspected attack.
+		attack_flag =0;
 		for(i=0; i<4; i++){
-			if(R_data[i]>mean[i]+3*std[i]) {
+			if(R_data[i]<=mean[i]+3*std[i]) {
 				printf("warning!!!!!!!\n\n");
-				attack_flag =1;
+				attack_flag =0;
 				count_flag = count_debug;
 			}
 		}	
@@ -545,7 +528,7 @@ int main(){
 			}
 		}
 		for(i=0;i<4;i++){
-			mean[i] = mean[i];
+			mean[i] = mean[i]/ N;
 		}
 
 		//initialize std;
@@ -561,17 +544,6 @@ int main(){
 		for(i=0;i<4;i++){
 			std[j] = sqrt(std[j]/N);
 		}
-
-
-		//
-
-		//for(i=0;i<4;i++){
-		//	printf("the mean and std is %lf, %lf\n", mean[i], std[i]);
-		//}
-		//printf("/****************************************************/\n");
-		//printQueue(predic_values);
-		//printQueue(metrics);
-		//printQueue(R_values);
 
 		count_debug++;
 
