@@ -100,7 +100,6 @@ data_t * NewDeQueue(sequeue_t *queue)
 	if(1 == EmptySequeue(queue)) return NULL;
 
 	memcpy((char *)values, (char *)queue->data[0],4*sizeof(data_t));
-	//printf("the dequeue->data is %lf,%lf,%lf,%lf\n\n", values[0],values[1],values[2],values[3]);
 	int count = queue->rear;
 	for(i=1; i< count+1; i++){
 		queue->data[i-1][0] = queue->data[i][0];
@@ -158,56 +157,56 @@ long *my_ipconfig(char *ath0)
         return NULL;  
     }  
       
-        char buf[1024*4];  
-        lseek(fd, 0, SEEK_SET);  
-        int nBytes = read(fd, buf, sizeof(buf)-1);   //get the fd data to buf, and ruturn total bytes
-        if (-1 == nBytes)  
+    char buf[1024*4];  
+    lseek(fd, 0, SEEK_SET);  
+    int nBytes = read(fd, buf, sizeof(buf)-1);   //get the fd data to buf, and ruturn total bytes
+    if (-1 == nBytes)  
+    {  
+        perror("read error");  
+        close(fd);  
+        return NULL;  
+    }  
+    buf[nBytes] = '\0';    //proess the end
+    //返回第一次指向ath0位置的指针  
+    char* pDev = strstr(buf, ath0);  
+    if (NULL == pDev)  
+    {  
+        printf("don't find dev %s\n", ath0);  
+        return NULL;  
+    }  
+    //have find the start point of network status
+    char *p;  
+    char *ifconfig_value;  
+    int i = 0;  
+    static long rx2_tx10[4];   //ues this value to save the two values we need. 
+    /*去除空格，制表符，换行符等不需要的字段*/  
+    for (p = strtok(pDev, " \t\r\n"); p; p = strtok(NULL, " \t\r\n"))  
+    {  
+        i++;  
+        ifconfig_value = (char*)malloc(20);  //20 bytes is enough for ifocnfig_value 
+        strcpy(ifconfig_value, p);  
+        /*得到的字符串中的第二个字段是接收流量*/  
+        if(i == 2)  
         {  
-            perror("read error");  
-            close(fd);  
-            return NULL;  
+            rx2_tx10[0] = atol(ifconfig_value);  //atol change char to long  
         }  
-        buf[nBytes] = '\0';    //proess the end
-        //返回第一次指向ath0位置的指针  
-        char* pDev = strstr(buf, ath0);  
-        if (NULL == pDev)  
+        if(i == 3)  
         {  
-            printf("don't find dev %s\n", ath0);  
-            return NULL;  
+            rx2_tx10[1] = atol(ifconfig_value);  //atol change char to long  
         }  
-        //have find the start point of network status
-        char *p;  
-        char *ifconfig_value;  
-        int i = 0;  
-        static long rx2_tx10[4];   //ues this value to save the two values we need. 
-        /*去除空格，制表符，换行符等不需要的字段*/  
-        for (p = strtok(pDev, " \t\r\n"); p; p = strtok(NULL, " \t\r\n"))  
+        /*得到的字符串中的第十个字段是发送流量*/  
+        if(i == 10)  
         {  
-            i++;  
-            ifconfig_value = (char*)malloc(20);  //20 bytes is enough for ifocnfig_value 
-            strcpy(ifconfig_value, p);  
-            /*得到的字符串中的第二个字段是接收流量*/  
-            if(i == 2)  
-            {  
-                rx2_tx10[0] = atol(ifconfig_value);  //atol change char to long  
-            }  
-            if(i == 3)  
-            {  
-                rx2_tx10[1] = atol(ifconfig_value);  //atol change char to long  
-            }  
-            /*得到的字符串中的第十个字段是发送流量*/  
-            if(i == 10)  
-            {  
-                rx2_tx10[2] = atol(ifconfig_value);  
-            }  
-             if(i == 11)  
-            {  
-                rx2_tx10[3] = atol(ifconfig_value);  
-                break;  
-            }  
-            free(ifconfig_value);  
+            rx2_tx10[2] = atol(ifconfig_value);  
         }  
-        return rx2_tx10;  
+         if(i == 11)  
+        {  
+            rx2_tx10[3] = atol(ifconfig_value);  
+            break;  
+        }  
+        free(ifconfig_value);  
+    }  
+    return rx2_tx10;  
 }  
 
 /********************网卡数据相关函数*********************/
@@ -217,7 +216,6 @@ long *my_ipconfig(char *ath0)
 
 
 /********************初始化metric相关函数*********************/
-//返回1s中时间
 double * Initial_Metrics(char *ethernet_name)
 {
 
@@ -233,13 +231,15 @@ double * Initial_Metrics(char *ethernet_name)
     //ifconfig_result is the info on NPC we need
     ifconfig_result1 = my_ipconfig(ethernet_name); 
 
-    //the 1st tmp
+    //got the 1st rnd data V
     for(i=0;i<4;i++){
     	tmp_value1[i] = ifconfig_result1[i]/1.0;
     }
 
+	//time inteval is 2.5s, change it as you wish
     sleep(2.5);
 
+	//2nd rnd of the data V, so that we can get the actual 1st rnd data
     ifconfig_result2 = my_ipconfig(ethernet_name);
     for(i=0;i<4;i++){
     	tmp_value2[i] = ifconfig_result2[i]/1.0;
@@ -263,32 +263,26 @@ double * Initial_Metrics(char *ethernet_name)
 double *initial_predic(sequeue_t *metrics)
 {
 	//初始化所需变量
-	int i,j;
+	int i,j,k;
 	double lamda[N],tmp[4];
 	double *predic_value = (double *)malloc(4*sizeof(double));
 	sequeue_t *metrics_tmp = CreateEmptySequeue();
 	memcpy(metrics_tmp, metrics, sizeof(sequeue_t));
 
 	//printQueue(metrics_tmp);
-	//初始化lamda
-	for(i=0;i<N;i++){
-		lamda[i] = 1/(double)N;
+	//initial lamda
+	for(i=1;i<=N;i++){
+		lamda[i-1] = (i*2)/(double)(N*(N+1));  // such that the sum of all the lamda values=1
 	}
 
-	//计算当次的predic_value值
-
-	for(j=0; j<N-1; j++){
-		tmp[0] += lamda[j]*(metrics_tmp->data[j+1][0]-metrics_tmp->data[j][0]);
-		tmp[1] += lamda[j]*(metrics_tmp->data[j+1][1]-metrics_tmp->data[j][1]);
-		tmp[2] += lamda[j]*(metrics_tmp->data[j+1][2]-metrics_tmp->data[j][2]);
-		tmp[3] += lamda[j]*(metrics_tmp->data[j+1][3]-metrics_tmp->data[j][3]);
+	//calculate the prediection using WMA
+	for(j=0; j<N; j++)
+		for(k=0;k<4;k++){
+			tmp[k] += metrics_tmp->data[j][k] * lamda[j];
+		}
+	for(k=0;k<4;k++){
+		predic_value[k] = tmp[k];
 	}
-	predic_value[0] = metrics_tmp->data[N-1][0]+tmp[0]/(lamda[N-1]);
-	predic_value[1] = metrics_tmp->data[N-1][1]+tmp[1]/(lamda[N-1]);
-	predic_value[2] = metrics_tmp->data[N-1][2]+tmp[2]/(lamda[N-1]);
-	predic_value[3] = metrics_tmp->data[N-1][3]+tmp[3]/(lamda[N-1]);
-
-
 	//printf("the predic_value: %lf %lf %lf %lf\n", predic_value[0], predic_value[1], predic_value[2], predic_value[3]);
 	return predic_value;
 }
@@ -301,33 +295,19 @@ double *initial_R(double *metrics_data, double *predic_data, double *metrics_mea
 	int i;
 	double tmp1,tmp2;
 	double *R_value = (double *)malloc(4*sizeof(double));
-	/*
-	for(i=0; i<4; i++){
-		tmp1 = predic_data[i]-metrics_f_data[i];
-		tmp2 = metrics_data[i]-metrics_f_data[i];
-		if(fabs(tmp1-tmp2)<0.001)
-			R_value[i] = 1.0;
-		else if(predic_data[i] == metrics_f_data[i])
-				R_value[i] = 0;
-		else
-		{
-			//printf("the vp - vn = %lf %lf\t  the vn+1- vn = %lf %lf\n",predic_data[i],metrics_f_data[i],metrics_data[i],metrics_f_data[i]);
-			R_value[i] = (predic_data[i]-metrics_f_data[i])/(metrics_data[i]-metrics_f_data[i]);
-			//R_value[i] = ((predic_data[i]-metrics_f_data[i]) - (metrics_data[i] - metrics_f_data[i]))/metrics_f_data[i];
-			if(R_value[i]<0)
-				R_value[i]=-(R_value[i]);
-		}
-	}
-	*/
 
-	for(i=0; i<4; i++){
-		//tmp1 = predic_data[i]-metrics_mean_data[i];
-		//tmp2 = metrics_data[i]-metrics_mean_data[i];
-			//printf("the vp - vn = %lf %lf\t  the vn+1- vn = %lf %lf\n",predic_data[i],metrics_f_data[i],metrics_data[i],metrics_f_data[i]);
-			//R_value[i] = (predic_data[i]-metrics_f_data[i])/(metrics_data[i]-metrics_f_data[i]);
-		R_value[i] = (predic_data[i]- metrics_data[i] )/metrics_mean_data[i];
-		if(R_value[i]<0)
-			R_value[i]=-(R_value[i]);
+	//TODO this is not the exact method mentioned in the paper, but maybe better.
+	// for(i=0; i<4; i++){
+	// 	R_value[i] = (predic_data[i]- metrics_data[i] )/metrics_mean_data[i];
+	// 	if(R_value[i]<0)
+	// 		R_value[i]=-(R_value[i]);
+	// }
+	
+	for (i=0; i<4; i++){
+		if(predic_data[i]!=0.0)
+			R_value[i] = metrics_data[i]/predic_data[i];
+		else
+			R_value[i] = 0.0;
 	}
 	return R_value;
 }
@@ -433,7 +413,7 @@ int main(){
 	//第一次更新完成后，metrics是最新的metrics，但是R和predic_value都没有更新，所以如果需要比较的话，需要找到上一次的metric做比较
 
 	if(FullSequeue(predic_values)==1) 
-		printf("predic初始化完成！\n");
+		printf("initialization finished!\n");
 
 
 	//初始化mean
@@ -464,8 +444,7 @@ int main(){
 	for(i=0;i<4;i++){
 		printf("the mean and std is %lf, %lf\n", mean[i], std[i]);
 	}
-	
-	//fclose(fp1);
+
 	
 //for test
 	int count_debug = 0;
@@ -496,9 +475,9 @@ int main(){
 		//calculate if there is a suspected attack.
 		attack_flag =0;
 		for(i=0; i<4; i++){
-			if(R_data[i]<=mean[i]+3*std[i]) {
+			if(R_data[i]>=mean[i]+3*std[i] || R_data[i]<= mean[i]-3*std[i]) {
 				printf("warning!!!!!!!\n\n");
-				attack_flag =0;
+				attack_flag =1;
 				count_flag = count_debug;
 			}
 		}	
