@@ -1,2 +1,2 @@
 # OverWatch
-an DDoS early detection method in SDN 
+a DDoS early detection method on the switch. 
